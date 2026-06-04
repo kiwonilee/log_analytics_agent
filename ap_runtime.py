@@ -1,6 +1,10 @@
 import os
 import sys
 from dotenv import load_dotenv
+
+# Disable mTLS client certificate usage to bypass local OpenSSL decoding issues
+os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
+
 from vertexai.agent_engines import AdkApp
 
 # Set up project path namespaces and change directory to parent to allow proper packaging
@@ -84,6 +88,7 @@ deploy_config = {
     "env_vars": env_vars,
     "identity_type": vertexai_types.IdentityType.SERVICE_ACCOUNT,
     "staging_bucket": staging_bucket_uri,
+    "python_version": "3.13",
 }
 
 if service_account and deploy_config.get("identity_type") != vertexai_types.IdentityType.AGENT_IDENTITY:
