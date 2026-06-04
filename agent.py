@@ -169,16 +169,15 @@ def query_with_conversational_analytics(question: str) -> str:
             try:
                 import altair as alt
                 chart = alt.Chart.from_dict(vega_config)
-                image_path = "/tmp/visualization.png"
+                import uuid
+                chart_filename = f"visualization_{uuid.uuid4().hex}.png"
+                image_path = f"/tmp/{chart_filename}"
                 chart.save(image_path)
                 
                 # GCS 버킷에 차트를 업로드하고 URL을 획득합니다.
-                chart_url = upload_to_gcs_and_get_url(image_path, "charts/visualization.png")
+                chart_url = upload_to_gcs_and_get_url(image_path, f"charts/{chart_filename}")
                 
-                answer += (
-                    f"\n\n#### 📊 GKE 로그 시각화 차트\n"
-                    f"![GKE Log Visualization]({chart_url})\n"
-                )
+                answer += f"\n\n![GKE Log Visualization]({chart_url})\n"
             except Exception as chart_err:
                 answer += f"\n\n*(차트 렌더링 및 GCS 업로드 중 오류 발생: {chart_err})*\n"
                 
@@ -226,13 +225,14 @@ SYSTEM_INSTRUCTION = (
     "   - 내부망이 아닌 외부 공인 IP에서 kube-apiserver로 접근한 비정상 기록이나 cluster-admin과 같은 핵심 권한 변경 사항을 추적 보고합니다.\n\n"
 
     "출력 조건 및 양식 가이드:\n"
-    "답변은 친절하고 전문적인 한국어(Korean)로 작성하며, 질문의 성격과 목적에 따라 응답 형태를 다음 3가지 유형으로 엄격하게 분기하여 최적의 레이아웃을 제공하세요. "
+    "답변은 친절하고 전문적인 한국어(Korean)로 작성하며, 질문의 성격과 목적(그리고 실제 분석된 로그 상태의 심각성)에 따라 응답 형태를 다음 3가지 유형으로 엄격하게 분기하여 최적의 레이아웃을 제공하세요. "
+    "만약 사용자의 질문이 모호하더라도(예: 'Pod X 상태 확인해줘'), 실제 로그 분석 결과 OOM/크래시/치명적 에러가 발견되었다면 즉시 '유형 1'을 사용하고, 정상 상태이거나 장기 권고사항만 있다면 '유형 2' 혹은 '유형 3'으로 분기하십시오. "
     "모든 경우에 생성된 SQL 쿼리문은 출력에서 완전히 배제해야 합니다.\n\n"
-    "■ 유형 1: GKE 장애, 리소스 누수(OOM), 에러 로그 급증, 배포 직후 크래시 등 즉각적인 조치가 필요한 '긴급 장애 대응 및 트러블슈팅' 질문인 경우\n"
+    "■ 유형 1: GKE 장애, 리소스 누수(OOM), 에러 로그 급증, 배포 직후 크래시, 혹은 긴급 조치가 필요한 보안 침해 및 감사 정책 위반 등 즉각적인 대응(Action Items)이 필요한 질문인 경우\n"
     "다음의 4단계 구조의 SRE 상황판 대시보드 포맷으로 답변을 구성하십시오:\n\n"
     "### 1. 📊 GKE 로그 분석 요약\n"
     "- [Conversational Analytics API가 반환한 로그 트렌드 요약]\n"
-    "- **[주의 - 차트 출력 조건]**: `query_with_conversational_analytics` 도구가 반환한 결과 텍스트 본문에 '#### 📊 GKE 로그 시각화 차트'와 실제 GCS URL(`https://storage.googleapis.com/...`)이 **실제로 포함되어 있을 때만** 최종 답변에 차트 이미지 마크다운을 포함시키세요. 도구 결과에 실제 발급된 이미지 주소가 없다면, 임의로 가상의 GCS 이미지 링크를 지어내거나 출력에 포함해서는 안 됩니다.\n\n"
+    "- **[주의 - 차트 출력 조건]**: `query_with_conversational_analytics` 도구가 반환한 결과 텍스트 본문에 실제 GCS URL(`https://storage.googleapis.com/...`)을 포함한 이미지 마크다운(`![GKE Log Visualization](...)`)이 **실제로 포함되어 있을 때만** 최종 답변에 차트 이미지 마크다운을 포함시키세요. 도구 결과에 실제 발급된 이미지 주소가 없다면, 임의로 가상의 GCS 이미지 링크를 지어내거나 출력에 포함해서는 안 됩니다.\n\n"
     "### 2. 🚨 장애 모니터링 카드 (Incident Card)\n"
     "- **위험도 (Severity)**: 🔴 Critical (긴급) / 🟡 Warning (주의) 중 선택하여 표기\n"
     "- **장애 대상 (Target Scope)**:\n"
@@ -255,8 +255,8 @@ SYSTEM_INSTRUCTION = (
     "  ```\n"
     "- **3단계: 예방 및 모니터링 완화 조치**:\n"
     "  - [HPA 임계값 조정, 메모리 리소스 한계값 조정 설정 가이드 등]\n\n"
-    "■ 유형 2: 신구 버전 로그 비교 대조, 외부 IP 접근 감사 트렌드 분석, severity별 장기 동향 파악 등 '운영/보안/성능 인사이트' 질문인 경우\n"
-    "장애 모니터링 카드나 긴급 파드 삭제 명령어 대신, 시스템 아키텍처적 개선 제안에 초점을 맞춘 다음 포맷으로 답변을 구성하십시오:\n\n"
+    "■ 유형 2: 신구 버전 로그 비교 대조, 외부 IP 접근 감사 트렌드 분석, severity별 장기 동향 파악 등 즉각적인 긴급 대응이 필요하지 않은 중장기 '운영/보안/성능 인사이트' 질문인 경우\n"
+    "장애 모니터링 카드나 긴급 조치 명령어 대신, 시스템 아키텍처적 개선 제안에 초점을 맞춘 다음 포맷으로 답변을 구성하십시오:\n\n"
     "### 1. 📊 운영 로그 인사이트 요약\n"
     "- [로그 수집 경향 및 통계 정보 요약]\n\n"
     "### 2. 🔍 핵심 분석 및 패턴 탐지 (Key Observations)\n"
