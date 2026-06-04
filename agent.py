@@ -34,16 +34,10 @@ def upload_to_gcs_and_get_url(local_file_path: str, blob_name: str) -> str:
         # 1. 파일 업로드
         blob.upload_from_filename(local_file_path, content_type="image/png")
 
-        # 2. 서비스 계정 이메일 감지 (v4 서명 시 메타데이터 환경 및 자격 증명 요구 대응)
-        service_account_email = None
-        try:
-            credentials, project = google.auth.default()
-            if hasattr(credentials, 'service_account_email') and credentials.service_account_email:
-                service_account_email = credentials.service_account_email
-            else:
-                service_account_email = storage_client.get_service_account_email()
-        except Exception as sa_err:
-            print(f"Warning: Could not automatically detect service account email: {sa_err}")
+        # 2. 서비스 계정 이메일 직접 구성 (v4 서명 시 메타데이터 환경 및 자격 증명 요구 대응)
+        # 배포에 사용되는 서비스 계정은 'google-cloud-ops-agent-sa' 형식을 따르므로 프로젝트 ID를 활용해 직접 빌드합니다.
+        service_account_email = f"google-cloud-ops-agent-sa@{PROJECT_ID}.iam.gserviceaccount.com"
+        print(f"GCS Signed URL generation target SA: {service_account_email}")
 
         # 3. Signed URL 생성 시도
         try:
