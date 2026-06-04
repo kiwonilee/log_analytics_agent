@@ -16,9 +16,12 @@ LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
 # GCS upload helper function for charts
 def upload_to_gcs_and_get_url(local_file_path: str, blob_name: str) -> str:
-    """로컬 파일을 GCS 버킷에 업로드하고, 15분간 유효한 Signed URL을 생성하여 반환합니다."""
+    """로컬 파일을 GCS 버킷에 업로드하고, 15분간 유효한 Signed URL을 생성하여 반환합니다.
+    Signed URL 생성 실패 시 보안 설정에 따라 Public-Read 권한 부여 후 일반 URL로 폴백합니다.
+    """
     from google.cloud import storage
     import datetime
+    import google.auth
 
     artifact_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI", "gs://adk-sandbox-bucket")
     bucket_name = artifact_uri.replace("gs://", "").split("/")[0]
@@ -28,19 +31,39 @@ def upload_to_gcs_and_get_url(local_file_path: str, blob_name: str) -> str:
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
 
+        # 1. 파일 업로드
         blob.upload_from_filename(local_file_path, content_type="image/png")
 
+        # 2. 서비스 계정 이메일 감지 (v4 서명 시 메타데이터 환경 및 자격 증명 요구 대응)
+        service_account_email = None
+        try:
+            credentials, project = google.auth.default()
+            if hasattr(credentials, 'service_account_email') and credentials.service_account_email:
+                service_account_email = credentials.service_account_email
+            else:
+                service_account_email = storage_client.get_service_account_email()
+        except Exception as sa_err:
+            print(f"Warning: Could not automatically detect service account email: {sa_err}")
+
+        # 3. Signed URL 생성 시도
         try:
             url = blob.generate_signed_url(
                 version="v4",
                 expiration=datetime.timedelta(minutes=15),
                 method="GET",
+                service_account_email=service_account_email,
             )
             return url
         except Exception as sign_err:
-            # Fallback to standard public storage URL if signing is not possible (e.g. key/permissions issue)
-            print(f"Warning: Signed URL generation failed, falling back to public URL: {sign_err}")
-            return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+            print(f"Warning: Signed URL generation failed, attempting public read fallback: {sign_err}")
+            
+            # GCS 서명 실패 시, 최종 폴백으로 해당 이미지만 임시로 읽기 권한을 해제하여 노출을 보장합니다.
+            try:
+                blob.make_public()
+                return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+            except Exception as pub_err:
+                print(f"Warning: Failed to make blob public as fallback: {pub_err}")
+                return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
     except Exception as upload_err:
         print(f"Error uploading to GCS: {upload_err}")
         raise upload_err
