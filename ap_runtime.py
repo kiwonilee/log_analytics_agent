@@ -75,7 +75,7 @@ service_account = f"google-cloud-ops-agent-sa@{PROJECT_ID}.iam.gserviceaccount.c
 print(f"Deploying 'log_analytics_agent' to AgentPlatform in a single step...")
 
 deploy_config = {
-    "display_name": "GKE Conversational Log Analytics Agent",
+    "display_name": "GKE Log Analytics Agent",
     "description": "GKE and Kubernetes Log Analytics Agent utilizing the Conversational Analytics API and local Vega-Lite rendering.",
     "requirements": requirements_list,
     "extra_packages": ["log_analytics_agent"],
