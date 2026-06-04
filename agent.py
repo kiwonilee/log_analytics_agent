@@ -2,8 +2,8 @@ import os
 from google.adk.agents import Agent
 from google.adk.models import Gemini
 from google.adk.agents.callback_context import CallbackContext
+from google.adk.tools import FunctionTool, ToolContext
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
-from google.adk.tools import FunctionTool
 from google.adk.apps import App
 from google.genai import types
 from google.cloud import geminidataanalytics
@@ -97,11 +97,12 @@ def get_or_create_data_agent(client, parent, display_name):
     return operation.result()
 
 # 3. Define the Conversational Analytics API Tool
-def query_with_conversational_analytics(question: str) -> str:
+async def query_with_conversational_analytics(question: str, tool_context: ToolContext) -> str:
     """Conversational Analytics API를 활용하여 자연어 질문으로 GKE 로그 데이터를 분석하고 결과를 반환합니다.
     
     Args:
         question: 분석할 자연어 질문 (예: "오늘 발생한 에러 로그의 개수는?")
+        tool_context: ADK 도구 컨텍스트 객체
     """
     try:
         agent_client = geminidataanalytics.DataAgentServiceClient()
@@ -171,12 +172,23 @@ def query_with_conversational_analytics(question: str) -> str:
                 image_path = "/tmp/visualization.png"
                 chart.save(image_path)
                 
+                # ADK Artifact 시스템을 통해 차트를 바이너리 파트(Part)로 등록합니다.
+                # 이를 통해 외부 URL이 차단된 Gemini Enterprise App UI 등에서 네이티브 첨부 파일로 시각화 차트가 정상 렌더링됩니다.
+                from pathlib import Path
+                from google.genai import types as genai_types
+                image_bytes = Path(image_path).read_bytes()
+                await tool_context.save_artifact(
+                    "visualization.png",
+                    genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+                )
+                
                 # GCS 버킷에 차트를 업로드하고 URL을 획득합니다.
                 chart_url = upload_to_gcs_and_get_url(image_path, "charts/visualization.png")
                 
                 answer += (
                     f"\n\n#### 📊 GKE 로그 시각화 차트\n"
                     f"![GKE Log Visualization]({chart_url})\n"
+                    f"*(차트 이미지가 하단에 첨부 파일(Artifact)로도 추가되었습니다)*\n"
                 )
             except Exception as chart_err:
                 answer += f"\n\n*(차트 렌더링 및 GCS 업로드 중 오류 발생: {chart_err})*\n"
@@ -227,12 +239,31 @@ SYSTEM_INSTRUCTION = (
     "출력 양식:\n"
     "답변은 친절하고 전문적인 한국어(Korean)로 작성하며, 아래와 같은 Markdown 형태로 작성하세요. "
     "SQL 쿼리문은 포함하지 말아야 합니다:\n\n"
-    "### 1. Conversational Analytics API 방식 결과 요약\n"
-    "- [Conversational Analytics API가 반환한 내용 중 요약 및 인사이트 텍스트만 표시]\n"
-    "- **[주의 - 차트 출력 조건]**: `query_with_conversational_analytics` 도구가 반환한 결과 텍스트 본문에 '#### 📊 GKE 로그 시각화 차트'와 실제 GCS Signed URL(`https://storage.googleapis.com/...`)이 **실제로 포함되어 있을 때만** 최종 답변에 차트 이미지 마크다운을 포함시키세요. 도구 결과에 실제 발급된 서명된 이미지 주소가 없다면, 임의로 가상의 GCS 이미지 링크를 지어내거나 출력에 포함해서는 안 됩니다.\n\n"
-    "### 2. SRE 원인 분석 및 GKE 운영자 조치 가이드\n"
-    "- **장애/에러 원인 진단**: 발견된 에러 로그의 구체적인 기술적 원인, 리소스 압박, 배포 변경의 영향 혹은 보안 위협을 다각도로 매핑하여 진단합니다.\n"
-    "- **GKE 운영자 조치 가이드 (Next Actions)**: 운영자가 장애 복구 또는 검증을 위해 즉각 취해야 할 행동지침 및 kubectl 명령어 예시를 구체적으로 작성하세요."
+    "### 1. 📊 GKE 로그 분석 및 시각화 요약\n"
+    "- [Conversational Analytics API가 반환한 로그 트렌드/시각화 요약]\n"
+    "- **[차트 출력 조건]**: 도구(query_with_conversational_analytics)의 응답에 '#### 📊 GKE 로그 시각화 차트'와 이미지 링크(https://storage.googleapis.com/...)가 포함된 경우, 해당 이미지 마크다운 구조 전체를 생략하거나 가공하지 말고 반드시 최종 답변에 그대로 출력해 주세요.\n\n"
+    "### 2. 🚨 장애 모니터링 카드 (Incident Card)\n"
+    "- **위험도 (Severity)**: 🔴 Critical (긴급) / 🟡 Warning (주의) / 🟢 Info (일반) 중 선택하여 표기\n"
+    "- **장애 대상 (Target Scope)**:\n"
+    "  - **Namespace**: [분석된 대상 네임스페이스]\n"
+    "  - **Pod/Deployment**: [문제가 집중 발생한 파드 또는 디플로이먼트 이름]\n"
+    "  - **에러/로그 수**: [해당 시간대의 에러 로그 수와 점유율]\n"
+    "- **핵심 현상 (Primary Symptom)**: [장애 로그에서 파악한 핵심 장애 현상 한 줄 요약]\n\n"
+    "### 3. 🕵️‍♂️ SRE 근본 원인 분석 (Root Cause Analysis - RCA)\n"
+    "- **장애/에러 원인 진단**: 분석된 에러 로그의 구체적인 기술적 원인, 리소스 상태, 배포 변경 내역 및 외부 통신 지연 등을 다각도로 매핑하여 진단합니다.\n\n"
+    "### 4. 🛠️ GKE 운영자 즉각 조치 가이드 (Action Items)\n"
+    "운영자가 즉각 실행할 수 있는 행동 지침 및 `kubectl` 조치 명령어를 단계별로 기술합니다. "
+    "**[중요]**: 로그 분석 본문에서 파드 이름(예: `anetd-l-bm4pb`), 네임스페이스(예: `kube-system`), 디플로이먼트 이름 등이 확인되었다면, 일반 플레이스홀더(예: `<pod-name>`, `<namespace>`) 대신 **실제 식별된 GKE 리소스명을 명령에 직접 대입하여 즉시 복사해서 실행할 수 있는 형태로 구성해 주세요.**\n"
+    "- **1단계: 실시간 상태 진단 및 확인**:\n"
+    "  ```bash\n"
+    "  [직접 복사해 실행 가능한 진단 kubectl 명령어]\n"
+    "  ```\n"
+    "- **2단계: 복구 조치**:\n"
+    "  ```bash\n"
+    "  [실제 리소스 이름이 대입된 복구/재시작/롤백 kubectl 명령어]\n"
+    "  ```\n"
+    "- **3단계: 예방 및 모니터링 완화 조치**:\n"
+    "  - [HPA 임계값 조정, 메모리 리소스 한계값 조정 설정 가이드 등]"
 )
 
 root_agent = Agent(
