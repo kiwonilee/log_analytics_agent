@@ -16,12 +16,8 @@ LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
 # GCS upload helper function for charts
 def upload_to_gcs_and_get_url(local_file_path: str, blob_name: str) -> str:
-    """로컬 파일을 GCS 버킷에 업로드하고, 15분간 유효한 Signed URL을 생성하여 반환합니다.
-    Signed URL 생성 실패 시 보안 설정에 따라 Public-Read 권한 부여 후 일반 URL로 폴백합니다.
-    """
+    """로컬 파일을 Public GCS 버킷에 업로드하고, 고정된 Public HTTPS URL을 즉시 반환합니다."""
     from google.cloud import storage
-    import datetime
-    import google.auth
 
     artifact_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI", "gs://adk-sandbox-bucket")
     bucket_name = artifact_uri.replace("gs://", "").split("/")[0]
@@ -31,33 +27,12 @@ def upload_to_gcs_and_get_url(local_file_path: str, blob_name: str) -> str:
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
 
-        # 1. 파일 업로드
+        # GCS 버킷 자체에 allUsers 권한이 부여되었으므로 파일만 바로 업로드하면 됩니다.
         blob.upload_from_filename(local_file_path, content_type="image/png")
 
-        # 2. 서비스 계정 이메일 직접 구성 (v4 서명 시 메타데이터 환경 및 자격 증명 요구 대응)
-        # 배포에 사용되는 서비스 계정은 'google-cloud-ops-agent-sa' 형식을 따르므로 프로젝트 ID를 활용해 직접 빌드합니다.
-        service_account_email = f"google-cloud-ops-agent-sa@{PROJECT_ID}.iam.gserviceaccount.com"
-        print(f"GCS Signed URL generation target SA: {service_account_email}")
-
-        # 3. Signed URL 생성 시도
-        try:
-            url = blob.generate_signed_url(
-                version="v4",
-                expiration=datetime.timedelta(minutes=15),
-                method="GET",
-                service_account_email=service_account_email,
-            )
-            return url
-        except Exception as sign_err:
-            print(f"Warning: Signed URL generation failed, attempting public read fallback: {sign_err}")
-            
-            # GCS 서명 실패 시, 최종 폴백으로 해당 이미지만 임시로 읽기 권한을 해제하여 노출을 보장합니다.
-            try:
-                blob.make_public()
-                return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
-            except Exception as pub_err:
-                print(f"Warning: Failed to make blob public as fallback: {pub_err}")
-                return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+        public_url = f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+        print(f"GCS Chart uploaded successfully. Public URL: {public_url}")
+        return public_url
     except Exception as upload_err:
         print(f"Error uploading to GCS: {upload_err}")
         raise upload_err
