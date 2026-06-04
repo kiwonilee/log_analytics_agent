@@ -1,0 +1,12 @@
+[project]
+name = "log-analytics-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-adk[a2a,agent-identity]>=2.1.0",
+    "google-cloud-bigquery>=3.41.0",
+    "google-cloud-geminidataanalytics>=0.13.0",
+    "mcp>=1.27.2",
+]
