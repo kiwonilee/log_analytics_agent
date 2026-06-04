@@ -12,3 +12,5 @@ dependencies = [
     "google-cloud-geminidataanalytics>=0.13.0",
     "mcp>=1.27.2",
 ]
+
+

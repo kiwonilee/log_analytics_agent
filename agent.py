@@ -9,8 +9,9 @@ from google.genai import types
 from google.cloud import geminidataanalytics
 
 # 1. Load Configurations from Environment Variables
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "gcp-sandbox-kwlee")
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT") or "gcp-sandbox-kwlee"
 DATASET_ID = os.environ.get("DATASET_ID", "ob_log")
+
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
 # 2. Get or Create Conversational Analytics Data Agent helper

@@ -38,10 +38,11 @@ bq_env_keys = [
     "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY",
     "OTEL_SEMCONV_STABILITY_OPT_IN",
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
-    "GOOGLE_CLOUD_PROJECT",
     "DATASET_ID",
 ]
 env_vars = {key: os.environ[key] for key in bq_env_keys if key in os.environ}
+env_vars["GCP_PROJECT"] = PROJECT_ID
+
 
 # -----------------------------------------------------------------------------
 # Explicitly append Production Runtime URIs to the env_vars payload dictionary
@@ -80,12 +81,13 @@ deploy_config = {
     "requirements": requirements_list,
     "extra_packages": ["log_analytics_agent"],
     "env_vars": env_vars,
-    "identity_type": vertexai_types.IdentityType.AGENT_IDENTITY,
+    "identity_type": vertexai_types.IdentityType.SERVICE_ACCOUNT,
     "staging_bucket": staging_bucket_uri,
 }
 
-if service_account:
+if service_account and deploy_config.get("identity_type") != vertexai_types.IdentityType.AGENT_IDENTITY:
     deploy_config["service_account"] = service_account
+
 
 # Create a new resource with your agent deployed to Agent Runtime.
 remote_agent = client.agent_engines.create(
