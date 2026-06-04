@@ -10,7 +10,6 @@ dependencies = [
     "google-cloud-aiplatform>=1.155.0",
     "google-cloud-bigquery>=3.41.0",
     "google-cloud-geminidataanalytics>=0.13.0",
+    "google-cloud-storage",
     "mcp>=1.27.2",
 ]
-
-

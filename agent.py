@@ -14,6 +14,38 @@ DATASET_ID = os.environ.get("DATASET_ID", "ob_log")
 
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
+# GCS upload helper function for charts
+def upload_to_gcs_and_get_url(local_file_path: str, blob_name: str) -> str:
+    """로컬 파일을 GCS 버킷에 업로드하고, 15분간 유효한 Signed URL을 생성하여 반환합니다."""
+    from google.cloud import storage
+    import datetime
+
+    artifact_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI", "gs://adk-sandbox-bucket")
+    bucket_name = artifact_uri.replace("gs://", "").split("/")[0]
+
+    try:
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        blob.upload_from_filename(local_file_path, content_type="image/png")
+
+        try:
+            url = blob.generate_signed_url(
+                version="v4",
+                expiration=datetime.timedelta(minutes=15),
+                method="GET",
+            )
+            return url
+        except Exception as sign_err:
+            # Fallback to standard public storage URL if signing is not possible (e.g. key/permissions issue)
+            print(f"Warning: Signed URL generation failed, falling back to public URL: {sign_err}")
+            return f"https://storage.googleapis.com/{bucket_name}/{blob_name}"
+    except Exception as upload_err:
+        print(f"Error uploading to GCS: {upload_err}")
+        raise upload_err
+
+
 # 2. Get or Create Conversational Analytics Data Agent helper
 def get_or_create_data_agent(client, parent, display_name):
     try:
@@ -144,14 +176,18 @@ def query_with_conversational_analytics(question: str) -> str:
             try:
                 import altair as alt
                 chart = alt.Chart.from_dict(vega_config)
-                image_path = "/usr/local/google/home/kiwonlee/workspace/agents/log_analytics_agent/visualization.png"
+                image_path = "/tmp/visualization.png"
                 chart.save(image_path)
+                
+                # GCS 버킷에 차트를 업로드하고 URL을 획득합니다.
+                chart_url = upload_to_gcs_and_get_url(image_path, "charts/visualization.png")
+                
                 answer += (
                     f"\n\n#### 📊 GKE 로그 시각화 차트\n"
-                    f"![GKE Log Visualization](file://{image_path})\n"
+                    f"![GKE Log Visualization]({chart_url})\n"
                 )
             except Exception as chart_err:
-                answer += f"\n\n*(차트 렌더링 중 오류 발생: {chart_err})*\n"
+                answer += f"\n\n*(차트 렌더링 및 GCS 업로드 중 오류 발생: {chart_err})*\n"
                 
         return (
             f"### [Conversational Analytics API 방식 결과 요약]\n"
@@ -203,7 +239,7 @@ SYSTEM_INSTRUCTION = (
     "- [Conversational Analytics API가 반환한 내용 중 요약 및 인사이트 텍스트만 표시]\n"
     "- [시간별 동향 분석 등 차트 데이터가 존재할 경우 아래 마크다운 포맷으로 차트 이미지를 본문에 포함합니다]\n"
     "  #### 📊 GKE 로그 시각화 차트\n"
-    "  ![GKE Log Visualization](file:///usr/local/google/home/kiwonlee/workspace/agents/log_analytics_agent/visualization.png)\n\n"
+    "  ![GKE Log Visualization](https://storage.googleapis.com/<bucket_name>/charts/visualization.png?signed_parameters)\n\n"
     "### 2. SRE 원인 분석 및 GKE 운영자 조치 가이드\n"
     "- **장애/에러 원인 진단**: 발견된 에러 로그의 구체적인 기술적 원인, 리소스 압박, 배포 변경의 영향 혹은 보안 위협을 다각도로 매핑하여 진단합니다.\n"
     "- **GKE 운영자 조치 가이드 (Next Actions)**: 운영자가 장애 복구 또는 검증을 위해 즉각 취해야 할 행동지침 및 kubectl 명령어 예시를 구체적으로 작성하세요."

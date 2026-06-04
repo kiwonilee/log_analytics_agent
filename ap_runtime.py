@@ -66,6 +66,7 @@ requirements_list = [
     "google-api-core",
     "google-cloud-bigquery",
     "google-cloud-geminidataanalytics",
+    "google-cloud-storage",
     "altair",
     "vl-convert-python",
 ]
