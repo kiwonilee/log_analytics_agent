@@ -42,6 +42,21 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/storage.objectUser"
+
+# 5) OpenTelemetry Traces & Logs 수집 권한 부여 (Telemetry 가시성 활성화용)
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/cloudtrace.agent"
+
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/logging.logWriter"
+
+# 6) 필수 API 활성화 (Cloud Trace & Telemetry API)
+gcloud services enable \
+    cloudtrace.googleapis.com \
+    telemetry.googleapis.com \
+    monitoring.googleapis.com
 ```
 
 ### 2. 환경 변수 설정
