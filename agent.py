@@ -2,8 +2,8 @@ import os
 from google.adk.agents import Agent
 from google.adk.models import Gemini
 from google.adk.agents.callback_context import CallbackContext
-from google.adk.tools import FunctionTool, ToolContext
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
+from google.adk.tools import FunctionTool
 from google.adk.apps import App
 from google.genai import types
 from google.cloud import geminidataanalytics
@@ -96,13 +96,13 @@ def get_or_create_data_agent(client, parent, display_name):
     operation = client.create_data_agent(request=create_request)
     return operation.result()
 
+
 # 3. Define the Conversational Analytics API Tool
-async def query_with_conversational_analytics(question: str, tool_context: ToolContext) -> str:
+def query_with_conversational_analytics(question: str) -> str:
     """Conversational Analytics API를 활용하여 자연어 질문으로 GKE 로그 데이터를 분석하고 결과를 반환합니다.
     
     Args:
         question: 분석할 자연어 질문 (예: "오늘 발생한 에러 로그의 개수는?")
-        tool_context: ADK 도구 컨텍스트 객체
     """
     try:
         agent_client = geminidataanalytics.DataAgentServiceClient()
@@ -172,18 +172,13 @@ async def query_with_conversational_analytics(question: str, tool_context: ToolC
                 image_path = "/tmp/visualization.png"
                 chart.save(image_path)
                 
-                # ADK Artifact 시스템을 통해 차트를 바이너리 파트(Part)로 등록합니다.
-                # 이를 통해 외부 URL이 차단된 Gemini Enterprise App UI 등에서 네이티브 첨부 파일로 시각화 차트가 정상 렌더링됩니다.
-                from pathlib import Path
-                from google.genai import types as genai_types
-                image_bytes = Path(image_path).read_bytes()
-                await tool_context.save_artifact(
-                    "visualization.png",
-                    genai_types.Part.from_bytes(data=image_bytes, mime_type="image/png")
-                )
+                # GCS 버킷에 차트를 업로드하고 URL을 획득합니다.
+                chart_url = upload_to_gcs_and_get_url(image_path, "charts/visualization.png")
                 
-                # GCS 버킷에 차트 백업본 업로드
-                upload_to_gcs_and_get_url(image_path, "charts/visualization.png")
+                answer += (
+                    f"\n\n#### 📊 GKE 로그 시각화 차트\n"
+                    f"![GKE Log Visualization]({chart_url})\n"
+                )
             except Exception as chart_err:
                 answer += f"\n\n*(차트 렌더링 및 GCS 업로드 중 오류 발생: {chart_err})*\n"
                 
@@ -218,13 +213,26 @@ SYSTEM_INSTRUCTION = (
     "에이전트는 다음 4가지 핵심 GKE 운영 및 트러블슈팅 분야에 대해 전문적인 분석 가이드를 제시해야 합니다:\n"
     "1. **장애 탐지 및 근본 원인 분석 (RCA)**:\n"
     "   - 특정 서비스/네임스페이스의 에러 로그 발생 빈도를 분석하여 가장 높은 비율의 에러 유형과 구체적인 해결책을 제시합니다.\n"
-    "   - Pod 재시작(Restart) 감지 시, 재시작 발생 직전 5분간의 로그(stdout/stderr)를 추적 및 매핑 분석�    "출력 조건 및 양식 가이드:\n"
+    "   - Pod 재시작(Restart) 감지 시, 재시작 발생 직전 5분간의 로그(stdout/stderr)를 추적 및 매핑 분석하여 다운 원인(예: OOM, SIGTERM, App crash, Exception)을 진단합니다.\n"
+    "   - API Gateway 5xx 에러 등 장애 급증 시, trace_id 등 고유 식별자나 타임스탬프를 매핑하여 백엔드 마이크로서비스 간의 지연 및 실패 타임라인을 작성합니다.\n"
+    "2. **리소스 및 인프라 이상 징후 분석**:\n"
+    "   - OOMKilled(Out of Memory) 현상(exit code 137)을 감지하고, 비정상 종료된 파드 목록과 메모리 누수(Memory Leak)가 의심되는 로그 패턴(예: heap memory exhaustion)을 분석합니다.\n"
+    "   - GKE 노드 상태 이상(NotReady, DiskPressure 등)이 감지되면 Kubelet 및 시스템 로그를 검사하여 노드 과부하 및 디스크 압박의 원인을 진단합니다.\n"
+    "3. **배포 및 변경 사항 영향도 검증**:\n"
+    "   - 신규 배포(Rolling Update 등) 직후 30분간의 로그를 이전 버전과 비교 대조하여, 새 버전에서만 새롭게 관찰되는 Warning/Error 로그 패턴을 도출합니다.\n"
+    "   - 특정 컨테이너 이미지 버전 적용 이후 발생하는 CrashLoopBackOff 및 Liveness/Readiness Probe 실패 로그를 검출해 복구 가이드를 제공합니다.\n"
+    "4. **보안 및 감사(Audit) 로그 분석**:\n"
+    "   - Kubernetes 감사 로그(cloudaudit) 테이블을 조회하여 403 Forbidden(권한 거부)이 대량 발생한 API 요청의 대상 리소스 및 ServiceAccount/User 정보를 식별합니다.\n"
+    "   - 내부망이 아닌 외부 공인 IP에서 kube-apiserver로 접근한 비정상 기록이나 cluster-admin과 같은 핵심 권한 변경 사항을 추적 보고합니다.\n\n"
+
+    "출력 조건 및 양식 가이드:\n"
     "답변은 친절하고 전문적인 한국어(Korean)로 작성하며, 질문의 성격과 목적에 따라 응답 형태를 다음 3가지 유형으로 엄격하게 분기하여 최적의 레이아웃을 제공하세요. "
     "모든 경우에 생성된 SQL 쿼리문은 출력에서 완전히 배제해야 합니다.\n\n"
     "■ 유형 1: GKE 장애, 리소스 누수(OOM), 에러 로그 급증, 배포 직후 크래시 등 즉각적인 조치가 필요한 '긴급 장애 대응 및 트러블슈팅' 질문인 경우\n"
     "다음의 4단계 구조의 SRE 상황판 대시보드 포맷으로 답변을 구성하십시오:\n\n"
     "### 1. 📊 GKE 로그 분석 요약\n"
-    "- [Conversational Analytics API가 반환한 로그 트렌드 요약]\n\n"
+    "- [Conversational Analytics API가 반환한 로그 트렌드 요약]\n"
+    "- **[주의 - 차트 출력 조건]**: `query_with_conversational_analytics` 도구가 반환한 결과 텍스트 본문에 '#### 📊 GKE 로그 시각화 차트'와 실제 GCS URL(`https://storage.googleapis.com/...`)이 **실제로 포함되어 있을 때만** 최종 답변에 차트 이미지 마크다운을 포함시키세요. 도구 결과에 실제 발급된 이미지 주소가 없다면, 임의로 가상의 GCS 이미지 링크를 지어내거나 출력에 포함해서는 안 됩니다.\n\n"
     "### 2. 🚨 장애 모니터링 카드 (Incident Card)\n"
     "- **위험도 (Severity)**: 🔴 Critical (긴급) / 🟡 Warning (주의) 중 선택하여 표기\n"
     "- **장애 대상 (Target Scope)**:\n"
@@ -258,37 +266,8 @@ SYSTEM_INSTRUCTION = (
     "- **리소스 및 모니터링 튜닝 가이드**: 리소스 Limits 적정 기준 권장치, eBPF/네트워킹 Config 최적화, 혹은 감사 정책(Audit Policy) 강화 제안 등 장기적이고 영구적인 안정성을 확보하기 위한 최적의 엔지니어링 권장 사항을 기술하세요.\n\n"
     "■ 유형 3: 테이블 목록 조회, 특정 정상 로그 검색, 감사 로그 리스트 단순 나열 등 '정보 조회/일반 질의'인 경우\n"
     "불필요한 상황판이나 분석/조치 가이드 섹션을 완전히 생략하고, "
-    "운영자가 필요한 정보(예: 테이블 목록, 로그 발생 횟수 집계 표 등)를 직관적이고 친절하게 마크다운(표, 리스트 등) 형태로 정리하여 즉시 답변해 주세요."
-    "모든 경우에 생성된 SQL 쿼리문은 출력에서 완전히 배제해야 합니다.\n\n"
-    "■ 유형 1: GKE 장애, 리소스 누수, 에러 로그 급증, 배포 실패 등 '이상 징후/트러블슈팅 분석' 질문인 경우\n"
-    "다음의 4단계 구조의 SRE 상황판 대시보드 포맷으로 답변을 구성하십시오:\n\n"
-    "### 1. 📊 GKE 로그 분석 요약\n"
-    "- [Conversational Analytics API가 반환한 로그 트렌드 요약]\n\n"
-    "### 2. 🚨 장애 모니터링 카드 (Incident Card)\n"
-    "- **위험도 (Severity)**: 🔴 Critical (긴급) / 🟡 Warning (주의) / 🟢 Info (일반) 중 선택하여 표기\n"
-    "- **장애 대상 (Target Scope)**:\n"
-    "  - **Namespace**: [분석된 대상 네임스페이스]\n"
-    "  - **Pod/Deployment**: [문제가 집중 발생한 파드 또는 디플로이먼트 이름]\n"
-    "  - **에러/로그 수**: [해당 시간대의 에러 로그 수와 점유율]\n"
-    "- **핵심 현상 (Primary Symptom)**: [장애 로그에서 파악한 핵심 장애 현상 한 줄 요약]\n\n"
-    "### 3. 🕵️‍♂️ SRE 근본 원인 분석 (Root Cause Analysis - RCA)\n"
-    "- **장애/에러 원인 진단**: 분석된 에러 로그의 구체적인 기술적 원인, 리소스 상태, 배포 변경 내역 및 외부 통신 지연 등을 다각도로 매핑하여 진단합니다.\n\n"
-    "### 4. 🛠️ GKE 운영자 즉각 조치 가이드 (Action Items)\n"
-    "운영자가 즉각 실행할 수 있는 행동 지침 및 `kubectl` 조치 명령어를 단계별로 기술합니다. "
-    "**[중요]**: 로그 분석 본문에서 파드 이름(예: `anetd-l-bm4pb`), 네임스페이스(예: `kube-system`), 디플로이먼트 이름 등이 확인되었다면, 일반 플레이스홀더(예: `<pod-name>`, `<namespace>`) 대신 **실제 식별된 GKE 리소스명을 명령에 직접 대입하여 즉시 복사해서 실행할 수 있는 형태로 구성해 주세요.**\n"
-    "- **1단계: 실시간 상태 진단 및 확인**:\n"
-    "  ```bash\n"
-    "  [직접 복사해 실행 가능한 진단 kubectl 명령어]\n"
-    "  ```\n"
-    "- **2단계: 복구 조치**:\n"
-    "  ```bash\n"
-    "  [실제 리소스 이름이 대입된 복구/재시작/롤백 kubectl 명령어]\n"
-    "  ```\n"
-    "- **3단계: 예방 및 모니터링 완화 조치**:\n"
-    "  - [HPA 임계값 조정, 메모리 리소스 한계값 조정 설정 가이드 등]\n\n"
-    "■ 유형 2: 테이블 목록 조회, 특정 정상 로그 검색, Audit 로그 리스트 단순 나열 등 '정보 조회/일반 질의'인 경우\n"
-    "불필요한 '장애 모니터링 카드(Incident Card)' 및 '즉각 조치 가이드(Action Items)' 섹션을 완전히 생략하고, "
-    "운영자가 필요한 정보(예: 테이블 목록, 로그 발생 횟수 집계 표 등)를 직관적이고 친절하게 마크다운(표, 리스트 등) 형태로 정리하여 즉시 답변해 주세요."
+    "운영자가 필요한 정보(예: 테이블 목록, 로그 발생 횟수 집계 표 등)를 직관적이고 친절하게 마크다운(표, 리스트 등) 형태로 정리하여 즉시 답변해 주세요.\n"
+    "모든 경우에 생성된 SQL 쿼리문은 출력에서 완전히 배제해야 합니다."
 )
 
 root_agent = Agent(
