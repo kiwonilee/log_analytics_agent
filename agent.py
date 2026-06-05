@@ -8,6 +8,15 @@ from google.adk.apps import App
 from google.genai import types
 from google.cloud import geminidataanalytics
 
+# Monkeypatch google-adk session validation to support Gemini Enterprise session IDs (which contain slashes)
+try:
+    import google.adk.sessions.vertex_ai_session_service as vertex_session_service
+    vertex_session_service._validate_session_id = lambda session_id: None
+    print("Successfully monkeypatched google-adk session ID validation.")
+except Exception as patch_err:
+    print(f"Note: google-adk session ID validation monkeypatch skipped: {patch_err}")
+
+
 # 1. Load Configurations from Environment Variables
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("GCP_PROJECT") or "gcp-sandbox-kwlee"
 DATASET_ID = os.environ.get("DATASET_ID", "ob_log")
