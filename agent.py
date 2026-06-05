@@ -114,8 +114,10 @@ def query_with_conversational_analytics(question: str) -> str:
         # 1. Get or Create Agent
         data_agent = get_or_create_data_agent(agent_client, parent, display_name)
         
-        # 2. Create/Get Conversation Session
-        conv_id = "gke-log-analytics-session"
+        # 2. Create unique Conversation Session (Stateless)
+        import uuid
+        conv_id = f"gke-log-session-{uuid.uuid4().hex}"
+        conversation_name = f"{parent}/conversations/{conv_id}"
         conversation = geminidataanalytics.Conversation(
             agents=[data_agent.name]
         )
@@ -124,44 +126,48 @@ def query_with_conversational_analytics(question: str) -> str:
             conversation_id=conv_id,
             conversation=conversation,
         )
-        try:
-            chat_client.create_conversation(request=conv_request)
-        except Exception:
-            pass # Ignore if conversation session already exists
+        chat_client.create_conversation(request=conv_request)
             
-        # 3. Chat with Agent
-        chat_req = geminidataanalytics.ChatRequest(
-            parent=parent,
-            messages=[
-                geminidataanalytics.Message(
-                    user_message=geminidataanalytics.UserMessage(text=question)
-                )
-            ],
-            conversation_reference=geminidataanalytics.ConversationReference(
-                conversation=f"{parent}/conversations/{conv_id}"
-            ),
-            data_agent_context=geminidataanalytics.DataAgentContext(
-                data_agent=data_agent.name
-            )
-        )
-        
-        stream = chat_client.chat(request=chat_req)
         final_response_parts = []
         vega_config = None
         
-        for response in stream:
-            if response.system_message:
-                sys_msg = response.system_message
-                if sys_msg.text:
-                    text_msg = sys_msg.text
-                    if text_msg.text_type == geminidataanalytics.TextMessage.TextType.FINAL_RESPONSE:
-                        final_response_parts.extend(text_msg.parts)
-                if sys_msg.chart and sys_msg.chart.result and sys_msg.chart.result.vega_config:
-                    try:
-                        chart_result_dict = geminidataanalytics.ChartResult.to_dict(sys_msg.chart.result)
-                        vega_config = chart_result_dict.get("vega_config")
-                    except Exception as parse_err:
-                        pass
+        try:
+            # 3. Chat with Agent
+            chat_req = geminidataanalytics.ChatRequest(
+                parent=parent,
+                messages=[
+                    geminidataanalytics.Message(
+                        user_message=geminidataanalytics.UserMessage(text=question)
+                    )
+                ],
+                conversation_reference=geminidataanalytics.ConversationReference(
+                    conversation=conversation_name
+                ),
+                data_agent_context=geminidataanalytics.DataAgentContext(
+                    data_agent=data_agent.name
+                )
+            )
+            
+            stream = chat_client.chat(request=chat_req)
+            
+            for response in stream:
+                if response.system_message:
+                    sys_msg = response.system_message
+                    if sys_msg.text:
+                        text_msg = sys_msg.text
+                        if text_msg.text_type == geminidataanalytics.TextMessage.TextType.FINAL_RESPONSE:
+                            final_response_parts.extend(text_msg.parts)
+                    if sys_msg.chart and sys_msg.chart.result and sys_msg.chart.result.vega_config:
+                        try:
+                            chart_result_dict = geminidataanalytics.ChartResult.to_dict(sys_msg.chart.result)
+                            vega_config = chart_result_dict.get("vega_config")
+                        except Exception as parse_err:
+                            pass
+        finally:
+            try:
+                chat_client.delete_conversation(name=conversation_name)
+            except Exception as delete_err:
+                print(f"Warning: Failed to delete conversation {conversation_name}: {delete_err}")
         
         answer = "".join(final_response_parts)
         
