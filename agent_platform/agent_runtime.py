@@ -71,8 +71,6 @@ requirements_list = [
     "google-cloud-bigquery",
     "google-cloud-geminidataanalytics",
     "google-cloud-storage",
-    "altair",
-    "vl-convert-python",
 ]
 
 staging_bucket_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI", "gs://adk-sandbox-bucket")

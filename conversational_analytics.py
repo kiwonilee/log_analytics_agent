@@ -1,7 +1,5 @@
 import os
-import io
 import uuid
-import altair as alt
 import proto
 from google.cloud import bigquery
 from google.cloud import geminidataanalytics
@@ -9,7 +7,7 @@ from google.genai import types
 from google.adk.tools import ToolContext
 from google.protobuf.json_format import MessageToDict
 
-# 1. 차트 렌더링 및 Proto 변환 헬퍼 함수 정의
+# 1. Proto 변환 헬퍼 함수 정의
 def _convert(v):
     """Proto 맵/리스트 복합 타입을 Altair에서 사용 가능한 파이썬 기본 dict/list 구조로 재귀 변환합니다."""
     if isinstance(v, proto.marshal.collections.maps.MapComposite):
@@ -20,14 +18,6 @@ def _convert(v):
         return v
     else:
         return MessageToDict(v)
-
-def render_chart_to_bytes(vega_config_proto) -> bytes:
-    """Vega-Lite 설정을 바탕으로 차트 이미지를 생성하여 PNG 바이너리 바이트 데이터를 반환합니다."""
-    vega_config = _convert(vega_config_proto)
-    chart = alt.Chart.from_dict(vega_config)
-    buf = io.BytesIO()
-    chart.save(buf, format='png')
-    return buf.getvalue()
 
 # 1. 환경 변수 기반 설정 정보 로드
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
