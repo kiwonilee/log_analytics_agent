@@ -34,21 +34,9 @@ PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 DATASET_ID = os.environ.get("DATASET_ID")
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
-# DataAgent에 제공할 GKE 로그 스키마 및 수집 맥락 정보 템플릿 (권장되는 YAML 포맷 활용)
-AGENT_CONTEXT_INSTRUCTION = """- system_instruction: >-
-    You are GKE log analysis expert. Analyze logs in GKE tables.
-- additional_descriptions:
-    - text: >-
-        Available tables are in dataset `{project_id}.{dataset_id}`.
-        These tables contain GKE logs exported from Cloud Logging with the following filter criteria:
-        - Project ID: {project_id}
-        - Cluster Name/ID: 'online-boutique'
-        - Supported Resource Types: gke_cluster, gke_nodepool, k8s_cluster, k8s_node, k8s_pod, k8s_container, k8s_control_plane_component
-        - Supported API Services: k8s.io, container.googleapis.com
-        Use this context to accurately parse log sources and query GKE logs."""
 
 
-def get_or_create_data_agent(client, parent, display_name):
+def get_or_create_data_agent(client, parent, display_name, log_context):
     """지정된 디스플레이 이름의 DataAgent가 이미 있으면 이를 반환하고, 없으면 새로 생성합니다."""
     try:
         list_req = geminidataanalytics.ListDataAgentsRequest(parent=parent)
@@ -67,7 +55,7 @@ def get_or_create_data_agent(client, parent, display_name):
             project_id=PROJECT_ID,
             dataset_id=DATASET_ID,
             table_id=t.table_id,
-            schema=geminidataanalytics.Schema(description=f"Log table {t.table_id} in GKE dataset.")
+            schema=geminidataanalytics.Schema(description=f"Log table {t.table_id} containing {log_context} logs.")
         )
         for t in tables
     ]
@@ -75,35 +63,51 @@ def get_or_create_data_agent(client, parent, display_name):
     if not table_references:
         raise ValueError(f"No tables found in BigQuery dataset '{PROJECT_ID}.{DATASET_ID}'")
 
+    system_instruction = (
+        f"You are a log analysis expert. Analyze logs in the tables.\n"
+        f"The user has specified that these tables contain: {log_context}.\n"
+        f"Available tables are in dataset `{PROJECT_ID}.{DATASET_ID}`.\n"
+        f"Use this context to accurately parse log sources and query logs."
+    )
+
     published_context = geminidataanalytics.Context(
         datasource_references=geminidataanalytics.DatasourceReferences(
             bq=geminidataanalytics.BigQueryTableReferences(table_references=table_references)
         ),
-        system_instruction=AGENT_CONTEXT_INSTRUCTION.format(project_id=PROJECT_ID, dataset_id=DATASET_ID)
+        system_instruction=system_instruction
     )
 
     data_agent = geminidataanalytics.DataAgent(
         display_name=display_name,
-        description=f"Agent to analyze GKE logs in all tables of {PROJECT_ID}.{DATASET_ID}"
+        description=f"Agent to analyze logs ({log_context}) in all tables of {PROJECT_ID}.{DATASET_ID}"
     )
     data_agent.data_analytics_agent.published_context = published_context
 
     create_request = geminidataanalytics.CreateDataAgentRequest(parent=parent, data_agent=data_agent)
     return client.create_data_agent(request=create_request).result()
 
-async def query_with_conversational_analytics(question: str, tool_context: ToolContext) -> str:
-    """Conversational Analytics API를 활용하여 자연어 질문으로 GKE 로그 데이터를 분석하고 결과를 반환합니다."""
+async def query_with_conversational_analytics(question: str, log_context: str, tool_context: ToolContext) -> str:
+    """Conversational Analytics API를 활용하여 자연어 질문으로 로그 데이터를 분석하고 결과를 반환합니다.
+    
+    Args:
+        question: 분석할 자연어 질문 (예: "오늘 발생한 에러 로그의 개수는?")
+        log_context: 분석 대상 로그에 대한 수집 맥락 정보 (예: "Cloud Run 애플리케이션 로그", "Nginx 웹서버 로그")
+    """
     try:
         agent_client = geminidataanalytics.DataAgentServiceClient()
         chat_client = geminidataanalytics.DataChatServiceClient()
         
         parent = f"projects/{PROJECT_ID}/locations/{LOCATION}"
-        display_name = "GKE Advanced Log Agent"
         
-        data_agent = get_or_create_data_agent(agent_client, parent, display_name)
+        # Create a safe display name based on log_context
+        import re
+        safe_context = re.sub(r'[^a-zA-Z0-9\s\-]', '', log_context)[:40].strip()
+        display_name = f"Log Agent - {safe_context}" if safe_context else "Generic Log Agent"
+        
+        data_agent = get_or_create_data_agent(agent_client, parent, display_name, log_context)
         
         # 고유 세션 ID 생성 및 일시 대화 세션 생성
-        conv_id = f"gke-log-session-{uuid.uuid4().hex}"
+        conv_id = f"log-session-{uuid.uuid4().hex}"
         conversation_name = f"{parent}/conversations/{conv_id}"
         
         conv_request = geminidataanalytics.CreateConversationRequest(
@@ -168,7 +172,7 @@ async def query_with_conversational_analytics(question: str, tool_context: ToolC
                 )
                 
                 # 마크다운 렌더링을 위해 파일명을 이미지 태그 주소로 전달
-                answer += f"\n\n![GKE Log Visualization]({chart_filename})\n"
+                answer += f"\n\n![Log Visualization]({chart_filename})\n"
             except Exception as chart_err:
                 answer += f"\n\n*(차트 저장 중 오류 발생: {chart_err})*\n"
                 
