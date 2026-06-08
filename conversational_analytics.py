@@ -141,30 +141,16 @@ async def query_with_conversational_analytics(question: str, log_context: str, t
         
         answer = "".join(final_response_parts)
         
-        # 차트 존재 시 Vega-Lite JSON 스펙으로 변환하여 ADK Artifact 서비스에 저장하고 마크다운 추가
+        # 차트 존재 시 Vega-Lite JSON 스펙을 코드 블록으로 직접 출력
         if vega_config:
             try:
                 import json
                 vega_dict = _convert(vega_config)
-                vega_json = json.dumps(vega_dict)
-                chart_filename = f"visualization_{uuid.uuid4().hex}.json"
+                vega_json = json.dumps(vega_dict, indent=2)
                 
-                # Part 객체 생성 (Vega-Lite JSON 스펙)
-                artifact_part = types.Part.from_bytes(
-                    data=vega_json.encode("utf-8"),
-                    mime_type="application/vnd.vegalite.v5+json",
-                )
-                
-                # ADK 세션의 Artifact로 저장
-                await tool_context.save_artifact(
-                    filename=chart_filename,
-                    artifact=artifact_part,
-                )
-                
-                # 마크다운 렌더링을 위해 파일명을 이미지 태그 주소로 전달
-                answer += f"\n\n![Log Visualization]({chart_filename})\n"
+                answer += f"\n\n### 📊 에러 로그 발생 동향 차트 (Vega-Lite)\n```json:vega\n{vega_json}\n```\n"
             except Exception as chart_err:
-                answer += f"\n\n*(차트 저장 중 오류 발생: {chart_err})*\n"
+                answer += f"\n\n*(차트 데이터 변환 중 오류 발생: {chart_err})*\n"
                 
         return f"### [Conversational Analytics API 방식 결과 요약]\n{answer}\n"
     except Exception as e:
