@@ -148,7 +148,7 @@ async def query_with_conversational_analytics(question: str, log_context: str, t
                 vega_dict = _convert(vega_config)
                 vega_json = json.dumps(vega_dict, indent=2)
                 
-                answer += f"\n\n### 📊 에러 로그 발생 동향 차트 (Vega-Lite)\n```json:vega\n{vega_json}\n```\n"
+                answer += f"\n\n### 📊 에러 로그 발생 동향 차트 (Vega-Lite)\n```vega-lite\n{vega_json}\n```\n"
             except Exception as chart_err:
                 answer += f"\n\n*(차트 데이터 변환 중 오류 발생: {chart_err})*\n"
                 
