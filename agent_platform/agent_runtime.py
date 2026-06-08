@@ -8,7 +8,7 @@ os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
 from vertexai.agent_engines import AdkApp
 
 # Set up project path namespaces and change directory to parent to allow proper packaging
-project_parent = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+project_parent = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 os.chdir(project_parent)
 if project_parent not in sys.path:
     sys.path.insert(0, project_parent)

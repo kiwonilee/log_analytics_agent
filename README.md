@@ -60,21 +60,32 @@ gcloud services enable \
 ```
 
 ### 2. 환경 변수 설정
-`log_analytics_agent/.env` 파일을 아래의 예시와 같이 작성합니다.
+
+`log_analytics_agent/.env.template` 파일을 복사하여 `.env` 파일을 생성하고 필요한 설정 정보를 입력합니다.
+
+```bash
+# 템플릿 파일 복사
+cp log_analytics_agent/.env.template log_analytics_agent/.env
+```
+
+`log_analytics_agent/.env` 파일을 편집기로 열어 프로젝트 정보와 리소스 식별자를 본인의 GCP 환경에 맞춰 작성합니다.
 
 ```ini
 # Google Cloud Configuration
-GOOGLE_CLOUD_PROJECT="gcp-sandbox-kwlee"
+GOOGLE_CLOUD_PROJECT="YOUR_GOOGLE_CLOUD_PROJECT_ID" # 사용할 GCP 프로젝트 ID
 GOOGLE_CLOUD_LOCATION="global"
+GCP_RESOURCES_LOCATION="us-central1"
 
 # BigQuery Log Resources
-DATASET_ID="ob_log"
+DATASET_ID="YOUR_BIGQUERY_DATASET_ID"               # GKE 로그가 있는 BigQuery 데이터셋 ID (예: ob_log)
 
 # Telemetry & ADK Config
 GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true
 GOOGLE_GENAI_USE_VERTEXAI=true
+OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental"
 OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=EVENT_ONLY
 ```
+
 
 ### 2. 가상환경 및 패키지 설치
 `uv` 패키지 매니저 또는 일반 가상환경을 사용하여 의존성을 설치합니다.
@@ -91,26 +102,28 @@ uv sync
 
 ## 💻 로컬 검증 및 실행 방법
 
-작성된 에이전트가 로컬 환경에서 올바르게 BigQuery 테이블을 동적으로 스캔하고 답변하는지 확인하려면 아래 테스트 스크립트를 실행합니다.
+작성된 에이전트가 로컬 환경에서 올바르게 BigQuery 테이블을 동적으로 스캔하고 답변하는지 확인하려면 아래 ADK CLI 명령어를 사용해 대화형(Interactive) 모드로 실행하거나 단일 질문을 실행합니다.
 
 ```bash
-# 로컬 테스트 스크립트 실행
-uv run python /usr/local/google/home/kiwonlee/.gemini/jetski/brain/4abf9574-9655-48e1-8bc8-afcdd1a61513/scratch/test_agent_local.py
+# 1) 대화형(Interactive) 실행 모드 진입
+uv run adk run .
+
+# 2) 단일 질문으로 직접 검증 실행
+uv run adk run . "최근 발생한 에러 로그의 원인이 뭐야? 시각화 차트도 함께 그려줘."
 ```
 
 ---
 
 ## 🚀 Agent Runtime (Vertex AI Reasoning Engine) 배포
 
-에이전트를 구글 클라우드의 **Vertex AI Reasoning Engine (Agent Runtime)**에 배포하여 운영 환경(예: Slack 또는 API 서비스)에 적용합니다.
+에이전트를 구글 클라우드의 **Vertex AI Reasoning Engine (Agent Runtime)**에 배포하여 운영 환경에 적용합니다.
 
 ```bash
-# 배포 디렉터리로 이동 및 가상환경 활성화
-cd /usr/local/google/home/kiwonlee/workspace/agents/log_analytics_agent
+# 가상환경 활성화 (필요 시)
 source .venv/bin/activate
 
 # 플랫폼 배포 스크립트 실행
-uv run python ap_runtime.py
+uv run python agent_platform/agent_runtime.py
 ```
 
 배포가 성공적으로 완료되면 Vertex AI Reasoning Engine ID와 엔드포인트 정보가 터미널에 출력되며, Google Cloud Console의 Vertex AI Reasoning Engine 페이지에서 배포된 에이전트의 헬스체크 및 버전을 확인할 수 있습니다.
