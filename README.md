@@ -60,13 +60,16 @@ echo $BQ_DATASET_ID
 echo $BUCKET_NAME
 ```
 
-## 🚀 [선택 사전작업] BigQuery 로그 데이터셋 및 수집 설정 (선택/예시)
-운영 로그가 저장될 BigQuery 데이터셋을 생성하고, Cloud Logging의 로그를 실시간으로 BigQuery에 동기화하기 위한 로그 싱크(Sink)를 설정합니다.
+------------------
+## 🚀 [선택 작업] BigQuery 데이터 셋에 Logging 데이터 수집 (선택/예시)
+(기 구축한 BigQuery 에 Cloud Loging 데이터가 저장되고 있다면 이 단계는 스킵합니다.)
+Cloud Logging 에 로그 생성을 위해 GKE 클러스터를 생성하고, 워크로드를 배포합니다.
+운영 로그가 저장될 BigQuery 데이터셋을 생성합니다.
+GKE 에서 발생되는 Cloud Logging의 로그를 실시간으로 BigQuery에 동기화하기 위한 로그 싱크(Sink)를 설정합니다.
 
 ```bash
-# 1) GKE 클러스터 생성
+# 1) GKE 클러스터 생성 (시간이 많이 소요되기 때문에 new tab 선택해서 생성합니다.)
 gcloud container clusters create-auto ob-cluster --region us-central1
-
 gcloud container clusters get-credentials ob-cluster --location us-central1
 
 # 2) GKE 클러스터에 워크로드 배포
@@ -79,16 +82,19 @@ bq --project_id=${PROJECT_ID} mk \
   ${BQ_DATASET_ID}
 
 # 4) Cloud Logging 의 모든 로그 BigQuery 로 내보내기(Log Sink) 설정
+# https://docs.cloud.google.com/logging/docs/export/configure_export_v2#creating_sink
 gcloud logging sinks create cloud_logs_export_sink \
   bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${BQ_DATASET_ID} \
   --log-filter="" \
   --project=${PROJECT_ID}
 
-# 5) BigQuery 의 Write 할 수 있는 권한 부여
+# 5) 로깅을 위한 SA 에 BigQuery Write 권한 부여
+# https://docs.cloud.google.com/logging/docs/export/configure_export_v2#dest-auth
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 --member=$(gcloud logging sinks describe cloud_logs_export_sink --format="value(writerIdentity)") \
   --role="roles/bigquery.dataEditor"
 ```
+------------------
 
 ### 3. GCS 버킷 생성 (배포 및 아티팩트 저장용)
 에이전트 코드 아카이빙과 실행 중 임시 아티팩트 저장을 위해 GCS 버킷을 생성합니다.
@@ -106,33 +112,43 @@ cp .env.template .env
 sed -i "s/YOUR_GOOGLE_CLOUD_PROJECT_ID/${PROJECT_ID}/g" .env
 sed -i "s/YOUR_GCP_RESOURCE_LOCATION/${RESOURCE_LOCATION}/g" .env
 sed -i "s/YOUR_BIGQUERY_DATASET_ID/${BQ_DATASET_ID}/g" .env
+
+cat .env
 ```
+`.env` 파일에 값이 제대로 설정되었는지 확인합니다.
 
 ### 5. 서비스 계정(SA) 생성 및 권한 설정
 에이전트가 배포되어 가동될 때 Vertex AI 모델 및 BigQuery 로그 데이터베이스에 안전하게 접근할 수 있도록 전용 서비스 계정을 생성하고 권한을 바인딩합니다.
 
 ```bash
-# 1) 서비스 계정 생성
+# 필수 API 활성화
+gcloud services enable \
+    cloudtrace.googleapis.com \
+    telemetry.googleapis.com \
+    monitoring.googleapis.com \
+    aiplatform.googleapis.com \
+    geminidataanalytics.googleapis.com \
+    apphub.googleapis.com \
+    cloudaicompanion.googleapis.com
+
+# 서비스 계정 생성
 gcloud iam service-accounts create agent-sa \
     --description="Conversational Cloud Log Analytics Agent Service Account" \
     --display-name="Cloud Log Analytics Agent SA"
 
-# 2) BigQuery 권한 부여 (로그 분석용)
+# 권한 부여
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/bigquery.admin"
 
-# 3) Vertex AI 권한 부여 (Gemini 모델 호출용)
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/aiplatform.user"
 
-# 4) GCS staging bucket 권한 부여 (에이전트 패키지 아카이빙용)
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/storage.objectUser"
 
-# 5) OpenTelemetry Traces & Logs 수집 권한 부여 (Telemetry 가시성 활성화용)
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/cloudtrace.agent"
@@ -148,67 +164,71 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="roles/cloudaicompanion.user"
-
-# 6) 필수 API 활성화 (Cloud Trace & Telemetry API)
-gcloud services enable \
-    cloudtrace.googleapis.com \
-    telemetry.googleapis.com \
-    monitoring.googleapis.com \
-    aiplatform.googleapis.com \
-    geminidataanalytics.googleapis.com \
-    apphub.googleapis.com \
-    cloudaicompanion.googleapis.com
 ```
 
 ---
 
-## 🚀 Agent Runtime (Vertex AI Reasoning Engine) 배포
+## 🚀 Agent Runtime 에 배포
 
-에이전트를 구글 클라우드의 **Vertex AI Reasoning Engine (Agent Runtime)**에 배포하여 운영 환경(Gemini Enterprise 등)에 배포 및 연결합니다.
+에이전트를 구글 클라우드의 **Agent Runtime**에 배포하고, Gemini Enterprise 에 연동 합니다.
 
 ```bash
 # 플랫폼 배포 스크립트 실행
 uv run python agent_platform/agent_runtime.py
 ```
 
-배포가 성공적으로 완료되면 배포된 에이전트의 Resource Name(예: `projects/.../locations/global/reasoningEngines/...`) 정보가 출력되며, Google Cloud Console의 Vertex AI Reasoning Engine 대시보드에서 헬스 체크 및 버전 상태를 관리할 수 있습니다.
+배포가 성공적으로 완료되면 배포된 에이전트의 Resource Name(예: `projects/.../locations/global/reasoningEngines/...`) 정보가 출력되며, Agent Platform 의 Playground 에서 헬스 체크 및 버전 상태를 관리할 수 있습니다.
 
-정상배포 후 Agent Runtime 의 Playgroud 에서 동작 확인이 가능합니다.
+클라우드 콘솔의 Agent Platform 메뉴에서 배포한 AI Agent 의 동작 확인이 가능합니다.
+Agent Platform - Agents - Deployments - Playground
+
+![alt text](./images/playground.png)
+
 
 
 ## 🚀 Agent Runtime에 배포한 Agent를 Gemini Enterprise App에 등록하기
 
-Vertex AI Agent Engine(Agent Runtime)에 배포가 완료된 커스텀 에이전트를 Gemini Enterprise(구 Google Cloud console 내 Gemini) 대시보드에 연결하여 대화형 인터페이스에서 사용하기 위한 절차입니다. 자세한 매뉴얼은 [공식 문서](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent)를 참고하십시오.
+Agent Runtime에 배포가 완료된 에이전트를 Gemini Enterprise App에 연결하여 대화형 인터페이스에서 사용하기 위한 절차입니다. 자세한 매뉴얼은 [공식 문서](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent)를 참고하십시오.
 
 ### 1단계: OAuth 클라이언트 ID 생성 (에이전트 권한 부여)
 Gemini Enterprise가 사용자를 대신하여 배포된 Agent Runtime API를 호출할 수 있도록 OAuth 2.0 클라이언트를 생성합니다.
-1. GCP 콘솔의 **APIs & Services > Credentials** 페이지로 이동합니다.
-2. **+ Create Credentials**를 클릭하고 **OAuth client ID**를 선택합니다.
+1. GCP 콘솔의 검색창에서 **Credentials** 찾아 이동합니다.
+2. 상단의 **+ Create Credentials**를 클릭하고 **OAuth client ID**를 선택합니다.
 3. **Application type**을 `Web application`으로 설정합니다.
 4. **Name**에 클라이언트 이름(예: `ge-agent-app`)을 입력합니다.
-5. [공식 문서 가이드 (Authorize your agent)](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent#authorize-your-agent)를 확인하여 승인된 리디렉션 URI(Authorized redirect URIs)를 입력합니다.
-```
-In the Authorized redirect URIs section, add the following URIs:
-
-https://vertexaisearch.cloud.google.com/oauth-redirect
-https://vertexaisearch.cloud.google.com/static/oauth/oauth.html
-```
+5. [Authorize your agent](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent#authorize-your-agent)를 확인하여 승인된 리디렉션 URI(Authorized redirect URIs)에 다음을 입력합니다.
+- https://vertexaisearch.cloud.google.com/oauth-redirect
+- https://vertexaisearch.cloud.google.com/static/oauth/oauth.html
 
 6. **Create**를 클릭한 후, 생성된 클라이언트 정보 창에서 **Download JSON**을 눌러 JSON 키 파일을 로컬에 다운로드합니다.
 (다운로드한 파일을 이후에 사용해야 하기 때문에 반드시 저장합니다.)
 
 ### 2단계: Gemini Enterprise에 커스텀 에이전트 등록
-1. **Gemini Enterprise** 콘솔 화면에 진입합니다.
-2. 좌측 메뉴에서 **Agent**를 클릭한 후 **Add agent**를 선택합니다.
+1. GCP 콘솔의 검색창에서 **Gemini Enterprise** 찾아 이동합니다.
+2. 좌측 메뉴에서 **Agent**를 클릭한 후 **+ Add agent**를 선택합니다.
 3. 등록 유형으로 **Custom agent via Agent Runtime**을 클릭합니다.
-4. 이전 단계에서 다운로드한 장보를 바탕으로 인증 정보를 등록합니다.
-[Register an ADK agent](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent#register-an-adk-agent)의 안내에 따라 에이전트 등록 세부 정보를 입력합니다.
-- Scopes: https://www.googleapis.com/auth/cloud-platform
-4. 배포 단계에서 획득한 에이전트 리소스 명(예: `projects/.../locations/global/reasoningEngines/...`)을 입력하여 연결합니다.
+4. 첫번째 단계인 Authorizations 에서 **Add authorization** 을 누르고, 1 단계에서 다운로드한 JSON Key 의 정보를 각각 입력합니다.
+- Client ID : 1단계에서 다운 받은 JSON KEY 값으로 부터 획득
+- Client secret : 1단계에서 다운 받은 JSON KEY 값으로 부터 획득
+- Token URI : 1단계에서 다운 받은 JSON KEY 값으로 부터 획득
+- Authorization URI : [Register an ADK agent](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent#register-an-adk-agent)의 안내에 따라 값 입력
+    - Scopes: https://www.googleapis.com/auth/cloud-platform
+5. Agent Runtime 에 Agent 배포 후 획득한 에이전트 리소스 명(예: `projects/.../locations/global/reasoningEngines/...`)을 입력하여 연결합니다.
+
+![alt text](./images/ge_agent.png)
+
+
+Gemini Enterprise App 에 접근하면 등록된 Agent 를 사용할 수 있습니다.
+
+방법1) 좌측의 Agents > 등록한 Agent 를 선택한 후 나오는 Agent 에서 프롬프트 입력
+
+방법2) @AgentName을 사용하여 Agent 호출
+
+![alt text](./images/ge_app.png)
 
 ---
 
-## 💻 로컬 검증 및 실행 방법
+## 💻 로컬 검증 및 실행 방법 (선택))
 
 작성된 에이전트가 로컬 환경에서 올바르게 작동하는지 확인하려면 아래 ADK CLI 명령어를 사용해 대화형(Interactive) 모드로 가동해 보실 수 있습니다.
 `uv` 패키지 매니저 또는 일반 가상환경을 사용하여 의존성을 설치합니다.
