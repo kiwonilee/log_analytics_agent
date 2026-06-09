@@ -5,8 +5,8 @@ from google.cloud import geminidataanalytics
 from google.adk.tools import ToolContext
 
 # 1. 환경 변수 기반 설정 정보 로드
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-DATASET_ID = os.environ.get("DATASET_ID")
+PROJECT_ID = os.environ.get("PROJECT_ID")
+DATASET_ID = os.environ.get("BQ_DATASET_ID")
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
 
 

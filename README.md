@@ -17,27 +17,79 @@
 
 ## 🛠️ 개발 및 배포 환경 준비
 
-### 1. GCS 버킷 생성 (배포 및 아티팩트 저장용)
-에이전트 패키지 아카이빙 및 세션 아티팩트 보존을 위한 Google Cloud Storage(GCS) 버킷을 생성합니다.
-
+### 1. 환경변수 설정
+아래 환경변수들을 먼저 터미널에 내보내기(export)하여 이후 설정 과정을 원활하게 진행합니다.
 ```bash
-# 본인의 버킷명으로 변경하여 생성하십시오 (예: adk-sandbox-bucket)
-export BUCKET_NAME="YOUR_BUCKET_NAME"
-gcloud storage buckets create gs://${BUCKET_NAME} --location=us-central1
+# 프로젝트 ID 설정
+export PROJECT_ID="YOUR_GOOGLE_CLOUD_PROJECT_ID"
+
+# Agent Runtime 및 리소스를 배포할 Region (예: us-central1)
+export RESOURCE_LOCATION="us-central1"
+
+# 에이전트 구동 및 배포에 사용할 Service Account 이메일 ("agent-sa@${PROJECT_ID}.iam.gserviceaccount.com")
+export SA_EMAIL="SA_EMBAIL"
+
+# 로그를 저장할 BigQuery 데이터셋 이름 (예: logs)
+export BQ_DATASET_ID="YOUR_BIGQUERY_DATASET_ID"
+
+# 배포 staging 및 아티팩트 저장을 위한 GCS 버킷 이름 (gs://log-analytics-bucket-${PROJECT_ID})
+export BUCKET_NAME="gs://xxxx"
 ```
 
-### 2. 서비스 계정(SA) 생성 및 권한 설정
+```bash
+echo $PROJECT_ID
+echo $RESOURCE_LOCATION
+echo $SA_EMAIL
+echo $BQ_DATASET_ID
+echo $BUCKET_NAME
+```
+
+## 🚀 [사전작업] BigQuery 로그 데이터셋 및 수집 설정 (선택/예시)
+운영 로그가 저장될 BigQuery 데이터셋을 생성하고, Cloud Logging의 로그를 실시간으로 BigQuery에 동기화하기 위한 로그 싱크(Sink)를 설정합니다.
+
+```bash
+# 1) BigQuery 데이터셋 생성
+bq --project_id=${PROJECT_ID} mk \
+  --location=${RESOURCE_LOCATION} \
+  --description="Cloud Logging" \
+  ${BQ_DATASET_ID}
+
+# 2) Cloud Logging 의 모든 로그 BigQuery 로 내보내기(Log Sink) 설정
+gcloud logging sinks create cloud_logs_export_sink \
+  bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${BQ_DATASET} \
+  --log-filter="" \
+  --project=${PROJECT_ID}
+```
+
+### 2. GCS 버킷 생성 (배포 및 아티팩트 저장용)
+에이전트 코드 아카이빙과 실행 중 임시 아티팩트 저장을 위해 GCS 버킷을 생성합니다.
+```bash
+gcloud storage buckets create ${BUCKET_NAME} --location=${RESOURCE_LOCATION}
+```
+
+### 4. Cloud Log Analytics Agent 코드 체크아웃
+```bash
+git clone https://github.com/kiwonilee/log_analytics_agent.git
+cd log_analytics_agent
+```
+
+### 3. 환경 변수 파일 생성 및 연동
+`.env.template`을 바탕으로 에이전트 런타임 환경 설정 파일(`.env`)을 생성하고 프로젝트 변수값을 치환합니다.
+```bash
+cp .env.template .env
+
+# 변수값 자동 업데이트
+sed -i "s/YOUR_GOOGLE_CLOUD_PROJECT_ID/${PROJECT_ID}/g" .env
+sed -i "s/YOUR_GCP_RESOURCE_LOCATION/${RESOURCE_LOCATION}/g" .env
+sed -i "s/YOUR_BIGQUERY_DATASET_ID/${BQ_DATASET}/g" .env
+```
+
+### 4. 서비스 계정(SA) 생성 및 권한 설정
 에이전트가 배포되어 가동될 때 Vertex AI 모델 및 BigQuery 로그 데이터베이스에 안전하게 접근할 수 있도록 전용 서비스 계정을 생성하고 권한을 바인딩합니다.
 
 ```bash
-# 프로젝트 ID 설정
-export PROJECT_ID=$(gcloud config get-value project)
-export SA_EMAIL="google-cloud-ops-agent-sa@${PROJECT_ID}.iam.gserviceaccount.com"
-```
-
-```bash
 # 1) 서비스 계정 생성
-gcloud iam service-accounts create google-cloud-ops-agent-sa \
+gcloud iam service-accounts create agent-sa \
     --description="Conversational Cloud Log Analytics Agent Service Account" \
     --display-name="Cloud Log Analytics Agent SA"
 
@@ -72,40 +124,7 @@ gcloud services enable \
     monitoring.googleapis.com
 ```
 
-### 3. 환경 변수 설정
-
-`log_analytics_agent/.env.template` 파일을 복사하여 `.env` 파일을 생성하고 필요한 설정 정보를 입력합니다.
-
-```bash
-# 템플릿 파일 복사
-cp log_analytics_agent/.env.template log_analytics_agent/.env
-```
-
-`log_analytics_agent/.env` 파일을 편집기로 열어 프로젝트 정보와 리소스 식별자를 본인의 GCP 환경에 맞춰 작성합니다.
-
-```ini
-# Google Cloud Configuration
-GOOGLE_CLOUD_PROJECT="YOUR_GOOGLE_CLOUD_PROJECT_ID"
-GOOGLE_CLOUD_LOCATION="global"
-GOOGLE_GENAI_USE_VERTEXAI=TRUE
-
-# SRE Resources
-GCP_RESOURCES_LOCATION="us-central1"
-
-# Telemetry for ADK
-GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY=true
-OTEL_SEMCONV_STABILITY_OPT_IN="gen_ai_latest_experimental"
-OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=EVENT_ONLY
-
-# BigQuery Log Resources
-DATASET_ID="YOUR_BIGQUERY_DATASET_ID"
-ADK_ARTIFACT_SERVICE_URI="YORU_GCS_BUCKET_NAME"
-```
-GCP_RESOURCES_LOCATION : Agent Runtime 을 배포할 지역
-DATASET_ID : BigQuery 데이터셋
-ADK_ARTIFACT_SERVICE_URI : Artifact 를 저장할 GCS 버켓 (gs:// 형태로 입력)
-
-### 4. 가상환경 및 패키지 설치
+### 5. 가상환경 및 패키지 설치
 `uv` 패키지 매니저 또는 일반 가상환경을 사용하여 의존성을 설치합니다.
 ```bash
 # 가상환경 생성 및 활성화
@@ -127,7 +146,7 @@ uv sync
 uv run adk run .
 
 # 2) 단일 질문으로 직접 검증 실행
-uv run adk run . "최근 발생한 에러 로그의 원인이 뭐야? 시각화 차트도 함께 그려줘."
+uv run adk run . "최근 발생한 에러 로그의 원인이 뭐야?"
 ```
 
 로컬 웹 테스트 서버를 띄워 UI 환경에서 시연을 원하신다면 다음 명령어를 사용합니다.
@@ -147,3 +166,5 @@ uv run python agent_platform/agent_runtime.py
 ```
 
 배포가 성공적으로 완료되면 배포된 에이전트의 Resource Name(예: `projects/.../locations/global/reasoningEngines/...`) 정보가 출력되며, Google Cloud Console의 Vertex AI Reasoning Engine 대시보드에서 헬스 체크 및 버전 상태를 관리할 수 있습니다.
+
+

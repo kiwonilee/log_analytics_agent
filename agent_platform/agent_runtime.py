@@ -12,8 +12,23 @@ if project_parent not in sys.path:
 # Load configurations from the project's .env file
 load_dotenv(os.path.join(project_parent, "log_analytics_agent/.env"))
 
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
-LOCATION = os.getenv("GCP_RESOURCES_LOCATION")
+# 1. Validate that all required configuration variables are present
+required_keys = ["PROJECT_ID", "RESOURCE_LOCATION", "SA_EMAIL", "BQ_DATASET_ID", "BUCKET_NAME"]
+missing_vars = [key for key in required_keys if not os.environ.get(key)]
+
+if missing_vars:
+    print("\n[ERROR] Missing required configuration environment variables:", file=sys.stderr)
+    for m in missing_vars:
+        print(f"  - {m}", file=sys.stderr)
+    print("\nPlease ensure you have either exported these in your terminal (see README.md)")
+    print("or defined them in your 'log_analytics_agent/.env' file.\n", file=sys.stderr)
+    sys.exit(1)
+
+PROJECT_ID = os.environ["PROJECT_ID"]
+LOCATION = os.environ["RESOURCE_LOCATION"]
+
+# Set the GCP SDK default project to match (to satisfy libraries that read default env)
+os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
 
 # Initialize client with v1beta1 support for Agent Identity
 import vertexai
@@ -34,23 +49,20 @@ adk_app = AdkApp(app=app)
 # -----------------------------------------------------------------------------
 bq_env_keys = [
     "GOOGLE_GENAI_USE_VERTEXAI",
-    "GCP_RESOURCES_LOCATION",
     "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY",
     "OTEL_SEMCONV_STABILITY_OPT_IN",
     "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
-    "DATASET_ID",
 ]
 env_vars = {key: os.environ[key] for key in bq_env_keys if key in os.environ}
 
-# -----------------------------------------------------------------------------
-# Explicitly append Production Runtime URIs to the env_vars payload dictionary
-# -----------------------------------------------------------------------------
+# Add unified environment variables to the deployed agent environment payload
+env_vars["PROJECT_ID"] = PROJECT_ID
+env_vars["RESOURCE_LOCATION"] = LOCATION
+env_vars["BQ_DATASET_ID"] = os.environ["BQ_DATASET_ID"]
 env_vars["GOOGLE_CLOUD_LOCATION"] = "global"
 
-# Get staging & artifact GCS bucket from environment (loaded from .env)
-staging_bucket_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI")
-if not staging_bucket_uri:
-    raise ValueError("ADK_ARTIFACT_SERVICE_URI is not set. Please set it in your .env file.")
+# Get staging & artifact GCS bucket from environment
+staging_bucket_uri = os.environ["BUCKET_NAME"]
 
 env_vars["ADK_SESSION_SERVICE_URI"] = "agentengine://"
 env_vars["ADK_MEMORY_SERVICE_URI"] = "agentengine://"
@@ -72,7 +84,8 @@ requirements_list = [
     "google-cloud-storage",
 ]
 
-service_account = f"google-cloud-ops-agent-sa@{PROJECT_ID}.iam.gserviceaccount.com"
+# Service Account to run the deployed agent (already validated at startup)
+service_account = os.environ["SA_EMAIL"]
 
 print(f"Deploying 'log_analytics_agent' to AgentPlatform in a single step...")
 
