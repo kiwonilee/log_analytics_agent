@@ -50,21 +50,35 @@ echo $BQ_DATASET_ID
 echo $BUCKET_NAME
 ```
 
-## 🚀 [사전작업] BigQuery 로그 데이터셋 및 수집 설정 (선택/예시)
+## 🚀 [선택 사전작업] BigQuery 로그 데이터셋 및 수집 설정 (선택/예시)
 운영 로그가 저장될 BigQuery 데이터셋을 생성하고, Cloud Logging의 로그를 실시간으로 BigQuery에 동기화하기 위한 로그 싱크(Sink)를 설정합니다.
 
 ```bash
-# 1) BigQuery 데이터셋 생성
+# 1) GKE 클러스터 생성
+gcloud container clusters create-auto ob-cluster --region us-central1
+
+gcloud container clusters get-credentials ob-cluster --location us-central1
+
+# 2) GKE 클러스터에 워크로드 배포
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml
+
+# 3) BigQuery 데이터셋 생성
 bq --project_id=${PROJECT_ID} mk \
   --location=${RESOURCE_LOCATION} \
   --description="Cloud Logging" \
   ${BQ_DATASET_ID}
 
-# 2) Cloud Logging 의 모든 로그 BigQuery 로 내보내기(Log Sink) 설정
+# 4) Cloud Logging 의 모든 로그 BigQuery 로 내보내기(Log Sink) 설정
 gcloud logging sinks create cloud_logs_export_sink \
   bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${BQ_DATASET} \
   --log-filter="" \
   --project=${PROJECT_ID}
+
+# 5) BigQuery 의 Write 할 수 있는 권한 부여
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+--member=$(gcloud logging sinks describe cloud_logs_export_sink --format="value(writerIdentity)") \
+  --role="roles/bigquery.dataEditor"
+
 ```
 
 ### 3. GCS 버킷 생성 (배포 및 아티팩트 저장용)
@@ -122,7 +136,10 @@ gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 gcloud services enable \
     cloudtrace.googleapis.com \
     telemetry.googleapis.com \
-    monitoring.googleapis.com
+    monitoring.googleapis.com \
+    aiplatform.googleapis.com \
+    geminidataanalytics.googleapis.com \
+    apphub.googleapis.com
 ```
 
 ### 6. 가상환경 및 패키지 설치
@@ -168,4 +185,28 @@ uv run python agent_platform/agent_runtime.py
 
 배포가 성공적으로 완료되면 배포된 에이전트의 Resource Name(예: `projects/.../locations/global/reasoningEngines/...`) 정보가 출력되며, Google Cloud Console의 Vertex AI Reasoning Engine 대시보드에서 헬스 체크 및 버전 상태를 관리할 수 있습니다.
 
+
+## 🚀 Agent Runtime에 배포한 Agent를 Gemini Enterprise App에 등록하기
+
+Vertex AI Agent Engine(Agent Runtime)에 배포가 완료된 커스텀 에이전트를 Gemini Enterprise(구 Google Cloud console 내 Gemini) 대시보드에 연결하여 대화형 인터페이스에서 사용하기 위한 절차입니다. 자세한 매뉴얼은 [공식 문서](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent)를 참고하십시오.
+
+### 1단계: OAuth 클라이언트 ID 생성 (에이전트 권한 부여)
+Gemini Enterprise가 사용자를 대신하여 배포된 Agent Runtime API를 호출할 수 있도록 OAuth 2.0 클라이언트를 생성합니다.
+1. GCP 콘솔의 **APIs & Services > Credentials** 페이지로 이동합니다.
+2. **+ Create Credentials**를 클릭하고 **OAuth client ID**를 선택합니다.
+3. **Application type**을 `Web application`으로 설정합니다.
+4. **Name**에 클라이언트 이름(예: `ge-agent-app`)을 입력합니다.
+5. [공식 문서 가이드 (Authorize your agent)](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent#authorize-your-agent)를 확인하여 승인된 리디렉션 URI(Authorized redirect URIs)를 입력합니다.
+6. **Create**를 클릭한 후, 생성된 클라이언트 정보 창에서 **Download JSON**을 눌러 JSON 키 파일을 로컬에 다운로드합니다.
+
+### 2단계: Gemini Enterprise에 커스텀 에이전트 등록
+1. **Gemini Enterprise** 콘솔 화면에 진입합니다.
+2. 좌측 메뉴에서 **Agent**를 클릭한 후 **Add agent**를 선택합니다.
+3. 등록 유형으로 **Custom agent via Agent Runtime**을 클릭합니다.
+4. 배포 단계에서 획득한 에이전트 리소스 명(예: `projects/.../locations/global/reasoningEngines/...`)을 입력하여 연결합니다.
+5. [공식 문서 가이드 (Register an ADK agent)](https://docs.cloud.google.com/gemini/enterprise/docs/register-and-manage-an-adk-agent#register-an-adk-agent)의 안내에 따라 에이전트 등록 세부 정보를 입력합니다.
+
+### 3단계: 인증(Authorizations) 추가 및 연결
+1. 등록된 에이전트의 상세 화면에서 **Authorizations** 섹션으로 이동하여 **Add authorization**을 누릅니다.
+2. 1단계에서 다운로드했던 OAuth 클라이언트 JSON 키 정보를 사용하여 연동 인증을 최종 활성화합니다.
 
