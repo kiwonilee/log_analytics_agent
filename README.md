@@ -17,7 +17,13 @@
 
 ## 🛠️ 개발 및 배포 환경 준비
 
-### 1. 환경변수 설정
+### 1. Cloud Log Analytics Agent 코드 체크아웃
+```bash
+git clone https://github.com/kiwonilee/log_analytics_agent.git
+cd log_analytics_agent
+```
+
+### 2. 환경변수 설정
 아래 환경변수들을 먼저 터미널에 내보내기(export)하여 이후 설정 과정을 원활하게 진행합니다.
 ```bash
 # 프로젝트 ID 설정
@@ -61,19 +67,14 @@ gcloud logging sinks create cloud_logs_export_sink \
   --project=${PROJECT_ID}
 ```
 
-### 2. GCS 버킷 생성 (배포 및 아티팩트 저장용)
+### 3. GCS 버킷 생성 (배포 및 아티팩트 저장용)
 에이전트 코드 아카이빙과 실행 중 임시 아티팩트 저장을 위해 GCS 버킷을 생성합니다.
 ```bash
 gcloud storage buckets create ${BUCKET_NAME} --location=${RESOURCE_LOCATION}
 ```
 
-### 4. Cloud Log Analytics Agent 코드 체크아웃
-```bash
-git clone https://github.com/kiwonilee/log_analytics_agent.git
-cd log_analytics_agent
-```
 
-### 3. 환경 변수 파일 생성 및 연동
+### 4. 환경 변수 파일 생성 및 연동
 `.env.template`을 바탕으로 에이전트 런타임 환경 설정 파일(`.env`)을 생성하고 프로젝트 변수값을 치환합니다.
 ```bash
 cp .env.template .env
@@ -84,7 +85,7 @@ sed -i "s/YOUR_GCP_RESOURCE_LOCATION/${RESOURCE_LOCATION}/g" .env
 sed -i "s/YOUR_BIGQUERY_DATASET_ID/${BQ_DATASET}/g" .env
 ```
 
-### 4. 서비스 계정(SA) 생성 및 권한 설정
+### 5. 서비스 계정(SA) 생성 및 권한 설정
 에이전트가 배포되어 가동될 때 Vertex AI 모델 및 BigQuery 로그 데이터베이스에 안전하게 접근할 수 있도록 전용 서비스 계정을 생성하고 권한을 바인딩합니다.
 
 ```bash
@@ -124,7 +125,7 @@ gcloud services enable \
     monitoring.googleapis.com
 ```
 
-### 5. 가상환경 및 패키지 설치
+### 6. 가상환경 및 패키지 설치
 `uv` 패키지 매니저 또는 일반 가상환경을 사용하여 의존성을 설치합니다.
 ```bash
 # 가상환경 생성 및 활성화
