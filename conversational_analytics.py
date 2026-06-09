@@ -6,10 +6,8 @@ from google.adk.tools import ToolContext
 
 # 1. 환경 변수 기반 설정 정보 로드
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-DATASET_ID = os.environ.get("DATASET_ID")
+BQ_DATASET_ID = os.environ.get("BQ_DATASET_ID")
 LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
-
-
 
 def get_or_create_data_agent(client, parent, display_name, log_context):
     """지정된 디스플레이 이름의 DataAgent가 이미 있으면 이를 반환하고, 없으면 새로 생성합니다."""
@@ -23,12 +21,12 @@ def get_or_create_data_agent(client, parent, display_name, log_context):
 
     # BigQuery 데이터셋 내부의 모든 로그 테이블 바인딩
     bq_client = bigquery.Client(project=PROJECT_ID)
-    tables = bq_client.list_tables(bq_client.dataset(DATASET_ID))
+    tables = bq_client.list_tables(bq_client.dataset(BQ_DATASET_ID))
     
     table_references = [
         geminidataanalytics.BigQueryTableReference(
             project_id=PROJECT_ID,
-            dataset_id=DATASET_ID,
+            dataset_id=BQ_DATASET_ID,
             table_id=t.table_id,
             schema=geminidataanalytics.Schema(description=f"Log table {t.table_id} containing {log_context} logs.")
         )
@@ -36,12 +34,12 @@ def get_or_create_data_agent(client, parent, display_name, log_context):
     ]
 
     if not table_references:
-        raise ValueError(f"No tables found in BigQuery dataset '{PROJECT_ID}.{DATASET_ID}'")
+        raise ValueError(f"No tables found in BigQuery dataset '{PROJECT_ID}.{BQ_DATASET_ID}'")
 
     system_instruction = (
         f"You are a log analysis expert. Analyze logs in the tables.\n"
         f"The user has specified that these tables contain: {log_context}.\n"
-        f"Available tables are in dataset `{PROJECT_ID}.{DATASET_ID}`.\n"
+        f"Available tables are in dataset `{PROJECT_ID}.{BQ_DATASET_ID}`.\n"
         f"Use this context to accurately parse log sources and query logs."
     )
 
@@ -54,7 +52,7 @@ def get_or_create_data_agent(client, parent, display_name, log_context):
 
     data_agent = geminidataanalytics.DataAgent(
         display_name=display_name,
-        description=f"Agent to analyze logs ({log_context}) in all tables of {PROJECT_ID}.{DATASET_ID}"
+        description=f"Agent to analyze logs ({log_context}) in all tables of {PROJECT_ID}.{BQ_DATASET_ID}"
     )
     data_agent.data_analytics_agent.published_context = published_context
 

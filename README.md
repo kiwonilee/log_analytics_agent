@@ -15,6 +15,16 @@
 
 ---
 
+## 📂 프로젝트 폴더 및 파일 구성
+
+- **[agent.py](agent.py)**: ADK 에이전트 엔트리포인트로, 도구 및 시스템 지침 바인딩과 대화 세션 관리 역할을 수행합니다.
+- **[agent_instruction.txt](agent_instruction.txt)**: 에이전트 가이드라인 및 SRE 관점의 출력 형식(Incident 대시보드, 리포트 템플릿 등)을 명시한 시스템 지침서입니다.
+- **[conversational_analytics.py](conversational_analytics.py)**: 구글 클라우드의 Conversational Analytics API를 활용하여 자연어 기반의 BigQuery 로그 데이터 스캔 및 분석 작업을 처리하는 커스텀 도구입니다.
+- **[agent_platform/agent_runtime.py](agent_platform/agent_runtime.py)**: 배포 스크립트로, 로컬/터미널 환경변수 유효성을 엄격하게 사전 검증하고 Vertex AI Reasoning Engine에 에이전트를 원클릭 배포합니다.
+- **[.env.template](.env.template)**: 프로젝트 환경 변수 설정 정보 파일의 가이드라인 템플릿입니다.
+
+---
+
 ## 🛠️ 개발 및 배포 환경 준비
 
 ### 1. Cloud Log Analytics Agent 코드 체크아웃
