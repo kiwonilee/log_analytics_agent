@@ -1,23 +1,8 @@
 import os
 import uuid
-import proto
 from google.cloud import bigquery
 from google.cloud import geminidataanalytics
-from google.genai import types
 from google.adk.tools import ToolContext
-from google.protobuf.json_format import MessageToDict
-
-# 1. Proto 변환 헬퍼 함수 정의
-def _convert(v):
-    """Proto 맵/리스트 복합 타입을 Altair에서 사용 가능한 파이썬 기본 dict/list 구조로 재귀 변환합니다."""
-    if isinstance(v, proto.marshal.collections.maps.MapComposite):
-        return {k: _convert(val) for k, val in v.items()}
-    elif isinstance(v, proto.marshal.collections.RepeatedComposite):
-        return [_convert(el) for el in v]
-    elif isinstance(v, (int, float, str, bool, type(None))):
-        return v
-    else:
-        return MessageToDict(v)
 
 # 1. 환경 변수 기반 설정 정보 로드
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
@@ -107,7 +92,7 @@ async def query_with_conversational_analytics(question: str, log_context: str, t
         )
         chat_client.create_conversation(request=conv_request)
             
-        final_response_parts, vega_config = [], None
+        final_response_parts = []
         
         try:
             chat_req = geminidataanalytics.ChatRequest(
@@ -129,10 +114,6 @@ async def query_with_conversational_analytics(question: str, log_context: str, t
                 # 최종 답변 텍스트 취합
                 if sys_msg.text and sys_msg.text.text_type == geminidataanalytics.TextMessage.TextType.FINAL_RESPONSE:
                     final_response_parts.extend(sys_msg.text.parts)
-                
-                # 차트 설정 파일 파싱 (Proto 객체 상태로 직접 획득)
-                if sys_msg.chart and sys_msg.chart.result and sys_msg.chart.result.vega_config:
-                    vega_config = sys_msg.chart.result.vega_config
         finally:
             try:
                 chat_client.delete_conversation(name=conversation_name)
@@ -140,18 +121,6 @@ async def query_with_conversational_analytics(question: str, log_context: str, t
                 print(f"Warning: Failed to delete conversation {conversation_name}: {delete_err}")
         
         answer = "".join(final_response_parts)
-        
-        # 차트 존재 시 Vega-Lite JSON 스펙을 코드 블록으로 직접 출력
-        if vega_config:
-            try:
-                import json
-                vega_dict = _convert(vega_config)
-                vega_json = json.dumps(vega_dict, indent=2)
-                
-                answer += f"\n\n### 📊 에러 로그 발생 동향 차트 (Vega-Lite)\n```vega-lite\n{vega_json}\n```\n"
-            except Exception as chart_err:
-                answer += f"\n\n*(차트 데이터 변환 중 오류 발생: {chart_err})*\n"
-                
         return f"### [Conversational Analytics API 방식 결과 요약]\n{answer}\n"
     except Exception as e:
         return f"### [Conversational Analytics API 방식 결과 요약]\n- **오류 발생**: {str(e)}\n"

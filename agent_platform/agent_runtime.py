@@ -1,10 +1,6 @@
 import os
 import sys
 from dotenv import load_dotenv
-
-# Disable mTLS client certificate usage to bypass local OpenSSL decoding issues
-os.environ["GOOGLE_API_USE_CLIENT_CERTIFICATE"] = "false"
-
 from vertexai.agent_engines import AdkApp
 
 # Set up project path namespaces and change directory to parent to allow proper packaging
@@ -16,8 +12,8 @@ if project_parent not in sys.path:
 # Load configurations from the project's .env file
 load_dotenv(os.path.join(project_parent, "log_analytics_agent/.env"))
 
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "gcp-sandbox-kwlee")
-LOCATION = os.getenv("GCP_RESOURCES_LOCATION", "us-central1")
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
+LOCATION = os.getenv("GCP_RESOURCES_LOCATION")
 
 # Initialize client with v1beta1 support for Agent Identity
 import vertexai
@@ -45,17 +41,20 @@ bq_env_keys = [
     "DATASET_ID",
 ]
 env_vars = {key: os.environ[key] for key in bq_env_keys if key in os.environ}
-env_vars["GCP_PROJECT"] = PROJECT_ID
-
 
 # -----------------------------------------------------------------------------
 # Explicitly append Production Runtime URIs to the env_vars payload dictionary
 # -----------------------------------------------------------------------------
 env_vars["GOOGLE_CLOUD_LOCATION"] = "global"
 
+# Get staging & artifact GCS bucket from environment (loaded from .env)
+staging_bucket_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI")
+if not staging_bucket_uri:
+    raise ValueError("ADK_ARTIFACT_SERVICE_URI is not set. Please set it in your .env file.")
+
 env_vars["ADK_SESSION_SERVICE_URI"] = "agentengine://"
 env_vars["ADK_MEMORY_SERVICE_URI"] = "agentengine://"
-env_vars["ADK_ARTIFACT_SERVICE_URI"] = "gs://adk-sandbox-bucket"
+env_vars["ADK_ARTIFACT_SERVICE_URI"] = staging_bucket_uri
 
 requirements_list = [
     "google-genai",
@@ -73,7 +72,6 @@ requirements_list = [
     "google-cloud-storage",
 ]
 
-staging_bucket_uri = os.environ.get("ADK_ARTIFACT_SERVICE_URI", "gs://adk-sandbox-bucket")
 service_account = f"google-cloud-ops-agent-sa@{PROJECT_ID}.iam.gserviceaccount.com"
 
 print(f"Deploying 'log_analytics_agent' to AgentPlatform in a single step...")
@@ -84,14 +82,11 @@ deploy_config = {
     "requirements": requirements_list,
     "extra_packages": ["log_analytics_agent"],
     "env_vars": env_vars,
-    "identity_type": vertexai_types.IdentityType.SERVICE_ACCOUNT,
+    "service_account": service_account,
+    # "identity_type": vertexai_types.IdentityType.SERVICE_ACCOUNT,
     "staging_bucket": staging_bucket_uri,
     "python_version": "3.13",
 }
-
-if service_account and deploy_config.get("identity_type") != vertexai_types.IdentityType.AGENT_IDENTITY:
-    deploy_config["service_account"] = service_account
-
 
 # Create a new resource with your agent deployed to Agent Runtime.
 remote_agent = client.agent_engines.create(
