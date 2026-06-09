@@ -42,14 +42,14 @@ export PROJECT_ID="YOUR_GOOGLE_CLOUD_PROJECT_ID"
 # Agent Runtime 및 리소스를 배포할 Region (예: us-central1)
 export RESOURCE_LOCATION="us-central1"
 
-# 에이전트 구동 및 배포에 사용할 Service Account 이메일 ("agent-sa@${PROJECT_ID}.iam.gserviceaccount.com")
-export SA_EMAIL="SA_EMBAIL"
+# 에이전트 구동 및 배포에 사용할 Service Account 이메일
+export SA_EMAIL="agent-sa@${PROJECT_ID}.iam.gserviceaccount.com"
 
-# 로그를 저장할 BigQuery 데이터셋 이름 (예: logs)
-export BQ_DATASET_ID="YOUR_BIGQUERY_DATASET_ID"
+# 로그를 저장할 BigQuery 데이터셋 이름
+export BQ_DATASET_ID="log_dataset"
 
-# 배포 staging 및 아티팩트 저장을 위한 GCS 버킷 이름 (gs://log-analytics-bucket-${PROJECT_ID})
-export BUCKET_NAME="gs://xxxx"
+# 배포 staging 및 아티팩트 저장을 위한 GCS 버킷 이름
+export BUCKET_NAME="gs://log-analytics-bucket-${PROJECT_ID}"
 ```
 
 ```bash
@@ -80,7 +80,7 @@ bq --project_id=${PROJECT_ID} mk \
 
 # 4) Cloud Logging 의 모든 로그 BigQuery 로 내보내기(Log Sink) 설정
 gcloud logging sinks create cloud_logs_export_sink \
-  bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${BQ_DATASET} \
+  bigquery.googleapis.com/projects/${PROJECT_ID}/datasets/${BQ_DATASET_ID} \
   --log-filter="" \
   --project=${PROJECT_ID}
 
@@ -88,7 +88,6 @@ gcloud logging sinks create cloud_logs_export_sink \
 gcloud projects add-iam-policy-binding ${PROJECT_ID} \
 --member=$(gcloud logging sinks describe cloud_logs_export_sink --format="value(writerIdentity)") \
   --role="roles/bigquery.dataEditor"
-
 ```
 
 ### 3. GCS 버킷 생성 (배포 및 아티팩트 저장용)
